@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Facebook Graph API Explorer</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; background: #f3f4f6; color: #1f2937; }
+    header { background: #1877f2; color: #fff; padding: 12px 20px; font-size: 18px; font-weight: 600; }
+    .layout { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr); gap: 16px; padding: 16px; align-items: start; }
+    @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12); padding: 14px; margin-bottom: 14px; }
+    .card h3 { margin: 0 0 8px; font-size: 15px; }
+    .card h3 small { font-weight: 400; color: #6b7280; margin-left: 6px; }
+    label { display: block; font-size: 12px; color: #4b5563; margin: 8px 0 2px; }
+    input, select { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; }
+    input.mono { font-family: Menlo, Consolas, monospace; }
+    button { background: #1877f2; color: #fff; border: 0; border-radius: 4px; padding: 7px 14px; cursor: pointer; font: inherit; }
+    button:hover { background: #166fe0; }
+    button:disabled { opacity: .5; cursor: wait; }
+    button.secondary { background: #e5e7eb; color: #111827; }
+    button.secondary:hover { background: #d1d5db; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+    .hint { font-size: 11px; color: #6b7280; margin-top: 6px; }
+    .url { font: 11px Menlo, Consolas, monospace; color: #6b7280; word-break: break-all; margin-top: 8px; }
+    .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #e0e7ff; color: #3730a3; }
+    .tag.page { background: #dcfce7; color: #166534; }
+    .log-panel { position: sticky; top: 16px; }
+    .log { background: #111827; color: #e5e7eb; border-radius: 6px; padding: 10px; height: calc(100vh - 150px); min-height: 300px; overflow: auto; font: 12px/1.45 Menlo, Consolas, monospace; }
+    .entry { border-bottom: 1px solid #374151; padding-bottom: 10px; margin-bottom: 10px; }
+    .entry .head { color: #9ca3af; }
+    .entry .req { color: #93c5fd; word-break: break-all; }
+    .ok { color: #4ade80; font-weight: 700; }
+    .err { color: #f87171; font-weight: 700; }
+    pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
+    .empty { color: #6b7280; }
+    .tokens .grid { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 10px; }
+</style>
+</head>
+<body>
+<div id="app">
+    <header>Facebook Graph API Explorer</header>
+    <div class="layout">
+        <div>
+            <div class="card tokens">
+                <h3>Токены и настройки</h3>
+                <div class="grid">
+                    <div>
+                        <label>user_token</label>
+                        <input :type="showTokens ? 'text' : 'password'" class="mono" v-model.trim="userToken" placeholder="EAAB..." autocomplete="off">
+                    </div>
+                    <div>
+                        <label>page_token</label>
+                        <input :type="showTokens ? 'text' : 'password'" class="mono" v-model.trim="pageToken" placeholder="EAAB..." autocomplete="off">
+                    </div>
+                    <div>
+                        <label>Версия API</label>
+                        <input v-model.trim="version" class="mono">
+                    </div>
+                </div>
+                <div class="hint">Токены сохраняются только в localStorage этого браузера. В лог и в файл истории они не попадают (маскируются).</div>
+                <div class="row">
+                    <button class="secondary" @click="showTokens = !showTokens">{{ showTokens ? 'Скрыть' : 'Показать' }} токены</button>
+                </div>
+            </div>
+
+            <div class="card" v-for="m in methods" :key="m.name">
+                <h3>{{ m.name }}
+                    <span class="tag" :class="m.token === 'page' ? 'page' : ''">{{ m.token }}_token</span>
+                    <small>{{ m.desc }}</small>
+                </h3>
+                <div v-for="a in m.args" :key="a.key">
+                    <label>{{ a.label }}<template v-if="a.required"> *</template></label>
+                    <select v-if="a.options" v-model="forms[m.name][a.key]">
+                        <option v-for="o in a.options" :value="o">{{ o }}</option>
+                    </select>
+                    <input v-else :type="a.type || 'text'" v-model.trim="forms[m.name][a.key]" @keyup.enter="send(m)">
+                </div>
+                <div class="url">{{ preview(m) }}</div>
+                <div class="row">
+                    <button :disabled="loading[m.name]" @click="send(m)">{{ loading[m.name] ? 'Отправка…' : 'Отправить' }}</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card log-panel">
+            <h3>Лог запросов <small>{{ history.length }} шт.</small></h3>
+            <div class="row" style="margin: 0 0 10px">
+                <button @click="saveHistory" :disabled="!history.length">Сохранить историю в файл</button>
+                <button class="secondary" @click="history = []" :disabled="!history.length">Очистить</button>
+            </div>
+            <div class="log" ref="log">
+                <div v-if="!history.length" class="empty">Здесь появятся запросы и ответы…</div>
+                <div class="entry" v-for="h in history" :key="h.id">
+                    <div class="head">#{{ h.id }} · {{ h.time }} · {{ h.method }} · {{ h.durationMs }} ms ·
+                        <span :class="h.ok ? 'ok' : 'err'">{{ h.status }}</span>
+                    </div>
+                    <div class="req">GET {{ h.url }}</div>
+                    <pre>{{ pretty(h.response) }}</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const { createApp, reactive, ref, watch, nextTick } = Vue;
+
+const HOST = 'https://graph.facebook.com';
+
+// Определения методов. build(args) возвращает { path, query }, как в Facebook.php
+const METHODS = [
+    {
+        name: 'getComment', token: 'user', desc: 'Комментарий по ID',
+        args: [{ key: 'commentId', label: 'commentId', required: true }],
+        build: a => ({
+            path: `/${a.commentId}`,
+            query: { fields: 'id,from,user,media{id,media_type},text,username,timestamp,like_count,parent_id' },
+        }),
+    },
+    {
+        name: 'getMedia', token: 'user', desc: 'Медиа по ID',
+        args: [{ key: 'mediaId', label: 'mediaId', required: true }],
+        build: a => ({
+            path: `/${a.mediaId}/`,
+            query: { fields: 'id,username,caption,media_product_type,media_type,media_url,owner,permalink,shortcode,comments_count,timestamp' },
+        }),
+    },
+    {
+        name: 'getMediaList', token: 'user', desc: 'Список медиа Instagram-аккаунта',
+        args: [
+            { key: 'instagramId', label: 'instagramId', required: true },
+            { key: 'since', label: 'since (необязательно)', type: 'datetime-local' },
+            { key: 'until', label: 'until (необязательно)', type: 'datetime-local' },
+        ],
+        build: a => {
+            const query = { fields: 'id,username,caption,media_product_type,media_type,media_url,owner,permalink,shortcode,comments_count,thumbnail_url,timestamp' };
+            if (a.since) query.since = Math.floor(new Date(a.since).getTime() / 1000);
+            if (a.until) query.until = Math.floor(new Date(a.until).getTime() / 1000);
+            return { path: `/${a.instagramId}/media`, query };
+        },
+    },
+    {
+        name: 'getMediaComments', token: 'page', desc: 'Комментарии к медиа',
+        args: [{ key: 'mediaId', label: 'mediaId', required: true }],
+        build: a => ({ path: `/${a.mediaId}/comments`, query: { fields: 'id,from,text' } }),
+    },
+    {
+        name: 'getMentionedComment', token: 'user', desc: 'Комментарий с упоминанием',
+        args: [
+            { key: 'userId', label: 'userId (IG user id)', required: true },
+            { key: 'commentId', label: 'commentId', required: true },
+        ],
+        build: a => ({
+            path: `/${a.userId}`,
+            query: { fields: `mentioned_comment.comment_id(${a.commentId}){id,username,text,timestamp,media{id,caption,timestamp,media_url,media_type,permalink,username}}` },
+        }),
+    },
+    {
+        name: 'getUser', token: 'page', desc: 'Информация о пользователе',
+        args: [
+            { key: 'id', label: 'id', required: true },
+            { key: 'accountType', label: 'accountType', options: ['UNDEFINED', 'IG_USER', 'USER'] },
+        ],
+        defaults: { accountType: 'UNDEFINED' },
+        build: a => {
+            const fields = ['id', 'name', 'username'];
+            if (a.accountType === 'IG_USER') fields.push('profile_picture_url', 'followers_count');
+            if (a.accountType === 'USER') fields.push('profile_pic', 'follower_count');
+            return { path: `/${a.id}/`, query: { fields: fields.join(',') } };
+        },
+    },
+    {
+        name: 'webhookInfo', token: 'page', desc: 'Подписки приложения страницы',
+        args: [{ key: 'pageId', label: 'pageId', required: true }],
+        build: a => ({ path: `/${a.pageId}/subscribed_apps`, query: {} }),
+    },
+    {
+        name: 'getPageAndInstagramAccount', token: 'user', desc: 'Страница и привязанный Instagram',
+        args: [{ key: 'pageId', label: 'pageId', required: true }],
+        build: a => ({
+            path: `/${a.pageId}/`,
+            query: { fields: 'id,name,picture,location,access_token,instagram_business_account.fields(id,username,name,followers_count,profile_picture_url)' },
+        }),
+    },
+    {
+        name: 'getInstagramAccounts', token: 'page', desc: 'Instagram-аккаунты страницы',
+        args: [{ key: 'pageId', label: 'pageId', required: true }],
+        build: a => ({ path: `/${a.pageId}/instagram_accounts`, query: { fields: 'id,username,name' } }),
+    },
+];
+
+createApp({
+    setup() {
+        const ls = (k, d) => localStorage.getItem('fbx_' + k) ?? d;
+        const userToken = ref(ls('user', ''));
+        const pageToken = ref(ls('page', ''));
+        const version = ref(ls('version', 'v26.0'));
+        const showTokens = ref(false);
+        const history = ref([]);
+        const loading = reactive({});
+        const log = ref(null);
+        let seq = 0;
+
+        const forms = reactive({});
+        METHODS.forEach(m => {
+            forms[m.name] = Object.assign({}, ...m.args.map(a => ({ [a.key]: '' })), m.defaults || {});
+        });
+
+        watch(userToken, v => localStorage.setItem('fbx_user', v));
+        watch(pageToken, v => localStorage.setItem('fbx_page', v));
+        watch(version, v => localStorage.setItem('fbx_version', v));
+
+        const tokenOf = m => (m.token === 'user' ? userToken.value : pageToken.value);
+
+        const buildUrl = (m, token) => {
+            const { path, query } = m.build(forms[m.name]);
+            const qs = new URLSearchParams(query);
+            qs.set('access_token', token);
+            // фигурные скобки, круглые скобки и запятые оставляем читаемыми
+            const q = qs.toString().replace(/%7B/g, '{').replace(/%7D/g, '}').replace(/%28/g, '(').replace(/%29/g, ')').replace(/%2C/g, ',');
+            return `${HOST}/${version.value}${path}?${q}`;
+        };
+
+        const mask = url => url.replace(/(access_token=)[^&]+/, '$1***');
+
+        const preview = m => mask(buildUrl(m, tokenOf(m) ? '***' : ''));
+
+        const pushEntry = (m, url, durationMs, status, ok, response) => {
+            history.value.push({
+                id: ++seq,
+                time: new Date().toLocaleString('ru-RU'),
+                method: m.name,
+                url, durationMs, status, ok, response,
+            });
+            nextTick(() => { if (log.value) log.value.scrollTop = log.value.scrollHeight; });
+        };
+
+        const send = async m => {
+            const missing = m.args.filter(a => a.required && !forms[m.name][a.key]);
+            if (missing.length) {
+                return pushEntry(m, mask(buildUrl(m, '')), 0, 'VALIDATION', false, {
+                    error: 'Не заполнены обязательные поля: ' + missing.map(a => a.key).join(', '),
+                });
+            }
+            const token = tokenOf(m);
+            if (!token) {
+                return pushEntry(m, mask(buildUrl(m, '')), 0, 'VALIDATION', false, {
+                    error: `Не указан ${m.token}_token`,
+                });
+            }
+            loading[m.name] = true;
+            const started = performance.now();
+            const url = buildUrl(m, token);
+            try {
+                const res = await fetch(url);
+                const text = await res.text();
+                let body;
+                try { body = JSON.parse(text); } catch (e) { body = text; }
+                pushEntry(m, mask(url), Math.round(performance.now() - started), `${res.status} ${res.statusText}`.trim(), res.ok, body);
+            } catch (e) {
+                pushEntry(m, mask(url), Math.round(performance.now() - started), 'NETWORK ERROR', false, { error: String(e) });
+            } finally {
+                loading[m.name] = false;
+            }
+        };
+
+        const pretty = v => (typeof v === 'string' ? v : JSON.stringify(v, null, 4));
+
+        const saveHistory = () => {
+            const blob = new Blob([JSON.stringify(history.value, null, 4)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `facebook-api-history-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        };
+
+        return { methods: METHODS, forms, userToken, pageToken, version, showTokens, history, loading, log, preview, send, pretty, saveHistory };
+    },
+}).mount('#app');
+</script>
+</body>
+</html>
+
