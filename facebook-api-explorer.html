@@ -36,6 +36,11 @@
     .err { color: #f87171; font-weight: 700; }
     pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
     .empty { color: #6b7280; }
+    details.fields { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 4px; }
+    details.fields summary { cursor: pointer; padding: 6px 8px; font-size: 12px; color: #4b5563; user-select: none; }
+    details.fields .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 2px 10px; padding: 4px 10px 10px; }
+    details.fields .list label { display: flex; align-items: center; gap: 6px; margin: 0; font: 12px Menlo, Consolas, monospace; color: #1f2937; cursor: pointer; }
+    details.fields .list input { width: auto; }
     .tokens .grid { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 10px; }
 </style>
 </head>
@@ -78,6 +83,14 @@
                     </select>
                     <input v-else :type="a.type || 'text'" v-model.trim="forms[m.name][a.key]" @keyup.enter="send(m)">
                 </div>
+                <details class="fields" v-if="m.fieldOptions">
+                    <summary>fields ({{ forms[m.name].fields.length }}/{{ m.fieldOptions.length }})</summary>
+                    <div class="list">
+                        <label v-for="f in m.fieldOptions" :key="f">
+                            <input type="checkbox" :value="f" v-model="forms[m.name].fields"> {{ f }}
+                        </label>
+                    </div>
+                </details>
                 <div class="url">{{ preview(m) }}</div>
                 <div class="row">
                     <button :disabled="loading[m.name]" @click="send(m)">{{ loading[m.name] ? 'Отправка…' : 'Отправить' }}</button>
@@ -110,6 +123,8 @@ const { createApp, reactive, ref, watch, nextTick } = Vue;
 
 const HOST = 'https://graph.facebook.com';
 
+const MEDIA_FIELDS = ['id', 'username', 'caption', 'media_product_type', 'media_type', 'media_url', 'thumbnail_url', 'owner', 'permalink', 'shortcode', 'comments_count', 'like_count', 'timestamp', 'is_comment_enabled', 'alt_text', 'children', 'video_title', 'view_count'];
+
 // Определения методов. build(args) возвращает { path, query }, как в Facebook.php
 const METHODS = [
     {
@@ -123,9 +138,11 @@ const METHODS = [
     {
         name: 'getMedia', token: 'user', desc: 'Медиа по ID',
         args: [{ key: 'mediaId', label: 'mediaId', required: true }],
+        fieldOptions: MEDIA_FIELDS,
+        defaults: { fields: ['id', 'username', 'caption', 'media_product_type', 'media_type', 'media_url', 'owner', 'permalink', 'shortcode', 'comments_count', 'timestamp'] },
         build: a => ({
             path: `/${a.mediaId}/`,
-            query: { fields: 'id,username,caption,media_product_type,media_type,media_url,owner,permalink,shortcode,comments_count,timestamp' },
+            query: a.fields.length ? { fields: MEDIA_FIELDS.filter(f => a.fields.includes(f)).join(',') } : {},
         }),
     },
     {
@@ -135,8 +152,10 @@ const METHODS = [
             { key: 'since', label: 'since (необязательно)', type: 'datetime-local' },
             { key: 'until', label: 'until (необязательно)', type: 'datetime-local' },
         ],
+        fieldOptions: MEDIA_FIELDS,
+        defaults: { fields: ['id', 'username', 'caption', 'media_product_type', 'media_type', 'media_url', 'owner', 'permalink', 'shortcode', 'comments_count', 'thumbnail_url', 'timestamp'] },
         build: a => {
-            const query = { fields: 'id,username,caption,media_product_type,media_type,media_url,owner,permalink,shortcode,comments_count,thumbnail_url,timestamp' };
+            const query = a.fields.length ? { fields: MEDIA_FIELDS.filter(f => a.fields.includes(f)).join(',') } : {};
             if (a.since) query.since = Math.floor(new Date(a.since).getTime() / 1000);
             if (a.until) query.until = Math.floor(new Date(a.until).getTime() / 1000);
             return { path: `/${a.instagramId}/media`, query };
@@ -206,7 +225,7 @@ createApp({
 
         const forms = reactive({});
         METHODS.forEach(m => {
-            forms[m.name] = Object.assign({}, ...m.args.map(a => ({ [a.key]: '' })), m.defaults || {});
+            forms[m.name] = Object.assign({}, ...m.args.map(a => ({ [a.key]: '' })), structuredClone(m.defaults || {}));
         });
 
         watch(userToken, v => localStorage.setItem('fbx_user', v));
